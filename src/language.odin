@@ -1,6 +1,6 @@
 package main
 
-SUPPORT_LANGUAGES :: false
+SUPPORT_LANGUAGES :: true
 
 Language :: enum {
 	EN,
@@ -84,16 +84,5 @@ campaign_to_string: [Language][Campaign]string = {
 	.UA = {
 		.Carrot_Harvest = "Збір Моркви",
 		.Easter_Eggs = "Пасхальні Яйця",
-	},
-}
-
-renderer_to_string: [Language][Renderer]string = {
-	.EN = {
-		.Software = "Software",
-		.GL = "OpenGL 1.1",
-	},
-	.UA = {
-		.Software = "Програмний",
-		.GL = "OpenGL 1.1",
 	},
 }

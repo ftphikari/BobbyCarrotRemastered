@@ -154,7 +154,7 @@ _default_window_proc :: proc "stdcall" (winid: win32.HWND, msg: win32.UINT, wpar
 		}
 	case win32.WM_NCACTIVATE: // this is like WM_ACTIVATEAPP but better (or so it seems)
 		window.is_focused = bool(wparam)
-		for key in &window.is_key_down do key = false
+		for &key in window.is_key_down do key = false
 		ev = Focus_Event{window.is_focused}
 	case win32.WM_ERASEBKGND:
 		return 1

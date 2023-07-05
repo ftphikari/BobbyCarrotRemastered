@@ -8,7 +8,7 @@ when ODIN_DEBUG {
 }
 
 when ODIN_OS == .Windows {
-	when ODIN_DEBUG do import pdb "pdb-55cbd21" // https://github.com/DaseinPhaos/pdb
+	when ODIN_DEBUG do import pdb "pdb-297ecbf/pdb" // https://github.com/DaseinPhaos/pdb
 }
 
 default_allocator := runtime.default_allocator()

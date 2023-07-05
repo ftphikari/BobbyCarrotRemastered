@@ -537,7 +537,7 @@ software_draw_stats :: proc(t: ^Texture2D, q: ^Region_Cache) {
 	pos.x = offset.x
 	small_array.push_back(q, draw_stats(t, &pos, "{}FPS {}ms last", u32(math.round(global_state.fps.average)), global_state.last_frame.average))
 	pos.x = offset.x
-	small_array.push_back(q, draw_stats(t, &pos, "{}{}", settings.renderer, "/VSYNC" if settings.vsync else ""))
+	small_array.push_back(q, draw_stats(t, &pos, "VSYNC" if settings.vsync else ""))
 }
 
 software_draw_text :: #force_inline proc(
@@ -548,7 +548,7 @@ software_draw_text :: #force_inline proc(
 	color: image.RGB_Pixel = {255, 255, 255},
 	shadow_color: image.RGB_Pixel = {0, 0, 0},
 ) -> (region: Rect) {
-	return measure_or_draw_text(.Software, t, font, text, pos, color, shadow_color)
+	return measure_or_draw_text(t, font, text, pos, color, shadow_color)
 }
 
 // blend foreground pixel with alpha onto background

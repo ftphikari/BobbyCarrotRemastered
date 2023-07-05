@@ -31,11 +31,6 @@ Rect :: struct {
 	size: [2]int,
 }
 
-Renderer :: enum {
-	GL,
-	Software,
-}
-
 Score :: struct {
 	time: f32, // in milliseconds
 	steps: int,
@@ -45,22 +40,24 @@ Settings :: struct {
 	fps: uint,
 	vsync: bool,
 	show_stats: bool,
-	renderer: Renderer,
-
-	last_unlocked_levels: [Campaign]int,
 	campaign: Campaign,
-
-	carrots_scoreboard: [len(carrot_levels)]Score,
-	eggs_scoreboard: [len(egg_levels)]Score,
-
-	selected_levels: [Campaign]int,
 	language: Language,
+	selected_levels: [Campaign]int,
 }
 default_settings: Settings : {
 	fps = 30,
 	vsync = true,
 }
 settings: Settings = default_settings
+
+Game_Save :: struct {
+	last_unlocked_levels: [Campaign]int,
+	carrots_scoreboard: [len(carrot_levels)]Score,
+	eggs_scoreboard: [len(egg_levels)]Score,
+}
+game_save: Game_Save
+
+settings_location, save_location: string
 
 TILES_W :: 16
 TILES_H :: 12
@@ -234,8 +231,6 @@ State :: struct {
 	loaded_resources: sync.Parker,
 
 	keyboard: Keyboard_State,
-
-	renderer_fallback: bool,
 }
 global_state: State
 
@@ -679,7 +674,6 @@ fract :: proc(x: f32) -> f32 {
 }
 
 measure_or_draw_text :: proc(
-	renderer: Renderer,
 	t: ^Texture2D,
 	font: Font,
 	text: string,
@@ -701,14 +695,8 @@ measure_or_draw_text :: proc(
 
 		glyph_pos := font.table[ch] or_else font.table['?']
 		if !no_draw {
-			switch renderer {
-			case .Software:
-				software_draw_from_texture(t, pos + 1, textures[font.texture], {glyph_pos, font.glyph_size}, {}, shadow_color)
-				software_draw_from_texture(t, pos, textures[font.texture], {glyph_pos, font.glyph_size}, {}, color)
-			case .GL:
-				gl_draw_from_texture(pos + 1, font.texture, {glyph_pos, font.glyph_size}, {}, shadow_color)
-				gl_draw_from_texture(pos, font.texture, {glyph_pos, font.glyph_size}, {}, color)
-			}
+			software_draw_from_texture(t, pos + 1, textures[font.texture], {glyph_pos, font.glyph_size}, {}, shadow_color)
+			software_draw_from_texture(t, pos, textures[font.texture], {glyph_pos, font.glyph_size}, {}, color)
 		}
 
 		pos.x += font.glyph_size[0] + 1
@@ -720,7 +708,7 @@ measure_or_draw_text :: proc(
 }
 
 measure_text :: #force_inline proc(font: Font, text: string) -> [2]int {
-	region := measure_or_draw_text(.Software, nil, font, text, {}, {}, {}, true)
+	region := measure_or_draw_text(nil, font, text, {}, {}, {}, true)
 	return region.size
 }
 
@@ -1117,19 +1105,19 @@ load_resources :: proc() {
 	general_font.glyph_size = {5, 7}
 	general_font.row_len = sprites[.Font].size[0] / (general_font.glyph_size[0] + 2)
 	general_font.table = make(map[rune][2]int, 0, default_allocator)
-	for ch in ` 0123456789` {
+	for ch in string(` 0123456789`) {
 		font_add(&general_font, ch, .Font)
 	}
-	for ch in `abcdefghijklmnopqrstuvwxyz` {
+	for ch in string(`abcdefghijklmnopqrstuvwxyz`) {
 		font_add(&general_font, ch, .Font)
 	}
-	for ch in `ABCDEFGHIJKLMNOPQRSTUVWXYZ` {
+	for ch in string(`ABCDEFGHIJKLMNOPQRSTUVWXYZ`) {
 		font_add(&general_font, ch, .Font)
 	}
-	for ch in `?'".,:;~!@#$^&_|\/%*+-=<>[]{}()` {
+	for ch in string(`?'".,:;~!@#$^&_|\/%*+-=<>[]{}()`) {
 		font_add(&general_font, ch, .Font)
 	}
-	for ch in `бБвВгГґҐдДєЄжЖзЗиИїЇйЙкКлЛмнпПтуУфФцЦчЧшШщЩьЬюЮяЯ` {
+	for ch in string(`бБвВгГґҐдДєЄжЖзЗиИїЇйЙкКлЛмнпПтуУфФцЦчЧшШщЩьЬюЮяЯ`) {
 		font_add(&general_font, ch, .Font)
 	}
 	// Cyrillic from Latin equivalents
@@ -1156,7 +1144,7 @@ load_resources :: proc() {
 	hud_font.glyph_size = {5, 8}
 	hud_font.row_len = sprites[.HUD_Font].size[0] / (hud_font.glyph_size[0] + 2)
 	hud_font.table = make(map[rune][2]int)
-	for ch in `0123456789:?` {
+	for ch in string(`0123456789:?`) {
 		font_add(&hud_font, ch, .HUD_Font)
 	}
 }
@@ -1216,38 +1204,17 @@ world_renderer :: proc() {
 	load_resources()
 	sync.unpark(&global_state.loaded_resources)
 
-	finish_renderer := proc(r: Renderer) {
-		#partial switch r {
-		case .GL: gl_render_finish()
-		}
-	}
-
-	was_init: [Renderer]bool
-	last_renderer := settings.renderer
+	was_init: bool
 	for {
 		defer free_all(context.temp_allocator)
 
-		renderer := settings.renderer
-		if last_renderer != renderer {
-			finish_renderer(last_renderer)
-			was_init[renderer] = false
-		}
-		last_renderer = renderer
-
-		switch renderer {
-		case .Software:
-			software_render(&timer, was_init[renderer])
-		case .GL:
-			gl_render(&timer, was_init[renderer])
-		}
-		was_init[renderer] = true
+		software_render(&timer, was_init)
+		was_init = true
 
 		if sync.atomic_load(&global_state.cleanup_threads) {
 			break
 		}
 	}
-
-	finish_renderer(last_renderer)
 }
 
 can_move :: proc(pos: [2]int, d: Direction) -> bool {
@@ -1443,9 +1410,9 @@ finish_level :: proc(next: int) {
 	scoreboard: []Score
 	switch settings.campaign {
 	case .Carrot_Harvest:
-		scoreboard = settings.carrots_scoreboard[:]
+		scoreboard = game_save.carrots_scoreboard[:]
 	case .Easter_Eggs:
-		scoreboard = settings.eggs_scoreboard[:]
+		scoreboard = game_save.eggs_scoreboard[:]
 	}
 
 	if world_level.score.time < scoreboard[world_level.current].time || scoreboard[world_level.current].time == 0 {
@@ -1458,9 +1425,10 @@ finish_level :: proc(next: int) {
 
 	world_level.ended = true
 	world_level.next = next
-	last_unlocked_level := &settings.last_unlocked_levels[settings.campaign]
+	last_unlocked_level := &game_save.last_unlocked_levels[settings.campaign]
 	if world_level.next > last_unlocked_level^ {
 		last_unlocked_level^ = world_level.next
+		save_data(game_save, save_location)
 	}
 	player_animation_start(&world.player.fading)
 }
@@ -1543,13 +1511,16 @@ switch_scene :: proc(s: Scene) {
 }
 
 main_menu_continue :: proc() {
-	world_level.next = settings.last_unlocked_levels[settings.campaign]
+	world_level.next = game_save.last_unlocked_levels[settings.campaign]
 	switch_scene(.Game)
 }
 
 main_menu_new_game :: proc() {
 	settings.selected_levels[settings.campaign] = 0
-	settings.last_unlocked_levels[settings.campaign] = 0
+	game_save.last_unlocked_levels[settings.campaign] = 0
+	save_data(settings, settings_location)
+	save_data(game_save, save_location)
+
 	world_level.next = 0
 	switch_scene(.Game)
 }
@@ -1597,48 +1568,48 @@ pause_menu_continue :: proc() {
 
 select_level_prev :: proc() {
 	settings.selected_levels[settings.campaign] -= 1
+	save_data(settings, settings_location)
+
 	world.keep_selected_option = true
 	show_main_menu()
 }
 
 select_level_next :: proc() {
 	settings.selected_levels[settings.campaign] += 1
+	save_data(settings, settings_location)
+
 	world.keep_selected_option = true
 	show_main_menu()
 }
 
 select_campaign_prev :: proc() {
 	settings.campaign -= Campaign(1)
+	save_data(settings, settings_location)
+
 	world.keep_selected_option = true
 	show_main_menu()
 }
 
 select_campaign_next :: proc() {
 	settings.campaign += Campaign(1)
+	save_data(settings, settings_location)
+
 	world.keep_selected_option = true
 	show_main_menu()
 }
 
 select_language_prev :: proc() {
 	settings.language -= Language(1)
+	save_data(settings, settings_location)
+
 	world.keep_selected_option = true
 	show_main_menu()
 }
 
 select_language_next :: proc() {
 	settings.language += Language(1)
-	world.keep_selected_option = true
-	show_main_menu()
-}
+	save_data(settings, settings_location)
 
-select_renderer_prev :: proc() {
-	settings.renderer -= Renderer(1)
-	world.keep_selected_option = true
-	show_main_menu()
-}
-
-select_renderer_next :: proc() {
-	settings.renderer += Renderer(1)
 	world.keep_selected_option = true
 	show_main_menu()
 }
@@ -1678,9 +1649,9 @@ show_scoreboard :: proc() {
 	scoreboard: []Score
 	switch settings.campaign {
 	case .Carrot_Harvest:
-		scoreboard = settings.carrots_scoreboard[:]
+		scoreboard = game_save.carrots_scoreboard[:]
 	case .Easter_Eggs:
-		scoreboard = settings.eggs_scoreboard[:]
+		scoreboard = game_save.eggs_scoreboard[:]
 	}
 
 	world.scoreboard_page = 0
@@ -1711,7 +1682,7 @@ show_main_menu :: proc() {
 
 	total_h: int
 
-	last_unlocked_level := settings.last_unlocked_levels[settings.campaign]
+	last_unlocked_level := game_save.last_unlocked_levels[settings.campaign]
 	levels_len := len(all_levels[settings.campaign])
 	if last_unlocked_level > 0 && last_unlocked_level < levels_len {
 		option: Menu_Option = {func = main_menu_continue}
@@ -1834,34 +1805,6 @@ show_main_menu :: proc() {
 
 		total_h += general_font.glyph_size[1]
 	}
-
-	{
-		option: Menu_Option
-		label_printf(&option, "{}: {}", language_strings[settings.language][.Renderer], renderer_to_string[settings.language][settings.renderer])
-		total_w := option.size[0] + (sprites[.HUD_Arrow_Right].size[0] + SPACE_BETWEEN_ARROW_AND_TEXT) * 2
-		option.x = (BUFFER_W - total_w) / 2
-		option.y = total_h
-		total_h += option.size[1]
-
-		arrows: [2]struct {
-			enabled: bool,
-			func: proc(),
-		}
-		arrows[0].func = select_renderer_prev
-		arrows[1].func = select_renderer_next
-
-		if int(settings.renderer) > 0 {
-			arrows[0].enabled = true
-		}
-		if int(settings.renderer) < len(Renderer) - 1 {
-			arrows[1].enabled = true
-		}
-		option.arrows = arrows
-
-		sar.push_back(&world.menu_options, option)
-	}
-
-	total_h += general_font.glyph_size[1]
 
 	// TODO: Manual?
 
@@ -2268,7 +2211,7 @@ world_updater :: proc() {
 
 			{ // keyboard inputs
 				sync.guard(&global_state.keyboard.lock)
-				for state, key in &global_state.keyboard.keys {
+				for &state, key in global_state.keyboard.keys {
 					if state == {} do continue
 
 					switch world.scene {
@@ -2349,13 +2292,6 @@ world_updater :: proc() {
 				}
 			}
 
-			if sync.atomic_load(&global_state.renderer_fallback) {
-				settings.renderer = .Software
-				world.keep_selected_option = true
-				show_main_menu()
-				sync.atomic_store(&global_state.renderer_fallback, false)
-			}
-
 			global_state.previous_tick = time.tick_now()
 		}
 
@@ -2410,6 +2346,14 @@ thread_run :: proc(fn: proc(), priority := thread.Thread_Priority.High, cleanup 
 	thread.start(t)
 }
 
+save_data :: proc(data: $T, location: string) {
+	data_raw, err := json.marshal(data, {pretty = true}, default_allocator)
+	assert(err == nil, fmt.tprint("Unable to save the data:", err))
+
+	ok := os.write_entire_file(location, data_raw)
+	assert(ok, fmt.tprint("Unable to save the data"))
+}
+
 _main :: proc() {
 	context.assertion_failure_proc = assertion_failure_proc
 	context.logger.procedure = logger_proc
@@ -2423,16 +2367,29 @@ _main :: proc() {
 		os2.mkdir(game_config_dir, os2.File_Mode_Dir)
 	}
 
-	settings_location := filepath.join({game_config_dir, "settings.save"}, default_allocator)
+	settings_location = filepath.join({game_config_dir, "settings.json"}, default_allocator)
+	save_location = filepath.join({game_config_dir, "save.json"}, default_allocator)
 
 	if os.exists(settings_location) {
 		bytes, _ := os.read_entire_file(settings_location)
 		defer delete(bytes)
 
 		json.unmarshal(bytes, &settings)
+
 		when !SUPPORT_LANGUAGES {
 			settings.language = .EN
 		}
+
+		save_data(settings, settings_location)
+	}
+
+	if os.exists(save_location) {
+		bytes, _ := os.read_entire_file(save_location)
+		defer delete(bytes)
+
+		json.unmarshal(bytes, &game_save)
+
+		save_data(game_save, save_location)
 	}
 
 	assert(spl.create(&window, GAME_TITLE, .Centered, [2]uint{WINDOW_W, WINDOW_H}), "Failed to create window")
@@ -2462,7 +2419,7 @@ _main :: proc() {
 		case spl.Focus_Event:
 			if !ev.focused {
 				sync.guard(&global_state.keyboard.lock)
-				for state in &global_state.keyboard.keys {
+				for &state in global_state.keyboard.keys {
 					// release all pressed keys
 					if .Held in state do state = {.Released}
 				}
@@ -2483,11 +2440,11 @@ _main :: proc() {
 				}
 				global_state.keyboard.keys[ev.key] = state
 			}
-			when ODIN_DEBUG {
-				if ev.state == .Pressed {
-					#partial switch ev.key {
-					case .I: settings.show_stats = !settings.show_stats
-					}
+			if ev.state == .Pressed {
+				#partial switch ev.key {
+				case .F3:
+					settings.show_stats = !settings.show_stats
+					save_data(settings, settings_location)
 				}
 			}
 		case spl.Mouse_Button_Event:
@@ -2500,12 +2457,6 @@ _main :: proc() {
 	sync.atomic_store(&global_state.cleanup_threads, true)
 	sync.wait_group_wait(&global_state.cleanup_wg)
 
-	// NOTE: this will only trigger on a proper quit, not on task termination
-	{
-		data, err := json.marshal(settings, {pretty = true}, default_allocator)
-		assert(err == nil, fmt.tprint("Unable to save the game:", err))
-
-		ok := os.write_entire_file(settings_location, data)
-		assert(ok, fmt.tprint("Unable to save the game"))
-	}
+	save_data(settings, settings_location)
+	save_data(game_save, save_location)
 }
